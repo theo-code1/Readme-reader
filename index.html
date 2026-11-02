@@ -49,6 +49,9 @@
   .tab.dragging { z-index: 2; overflow: visible; transition: background .15s, box-shadow .15s; background: var(--bg); color: var(--fg);
     box-shadow: 0 6px 18px var(--lift); border-radius: 8px; cursor: grabbing; }
   #tabs.settle .tab { transition: none; }
+  .tab.ghost { position: fixed; z-index: 40; pointer-events: none; overflow: hidden; background: var(--bg); color: var(--fg); border-radius: 8px;
+    box-shadow: 0 12px 32px var(--lift), 0 0 0 1px var(--line); rotate: -2deg; animation: lift .18s var(--ease); }
+  @keyframes lift { from { rotate: 0deg; scale: .96; } }
   .tab-title { flex: 1; min-width: 0; height: 100%; padding: 0 4px 0 12px; border: 0; background: none; text-align: left;
     font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tab-x { flex: none; width: 22px; height: 22px; margin-right: 6px; border: 0; border-radius: 50%; background: none; font-size: 16px; line-height: 1;
@@ -178,13 +181,24 @@ const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 let tabs = [], active = 0, shown = null;
 
+// A window made by dragging a tab out has ?w=<id>. It keeps its tabs to itself (sessionStorage) so it never overwrites the main window's saved tabs.
+const winId = new URLSearchParams(location.search).get('w');
+const HANDOFF = 'readme-reader-handoff-';
+const store = () => winId ? sessionStorage : localStorage;
+const storeKey = winId ? KEY + ':' + winId : KEY;
+
 function save() {
-  try { localStorage.setItem(KEY, JSON.stringify({ tabs: tabs.map(({ name, md }) => ({ name, md })), active })); }
+  try { store().setItem(storeKey, JSON.stringify({ tabs: tabs.map(({ name, md }) => ({ name, md })), active })); }
   catch { /* storage full or blocked: tabs just won't be restored */ }
 }
 function restore() {
   try {
-    const s = JSON.parse(localStorage.getItem(KEY));
+    if (winId && !store().getItem(storeKey)) {
+      const h = localStorage.getItem(HANDOFF + winId);
+      localStorage.removeItem(HANDOFF + winId);
+      if (h) { tabs = [JSON.parse(h)]; active = 0; return true; }
+    }
+    const s = JSON.parse(store().getItem(storeKey));
     if (s && Array.isArray(s.tabs) && s.tabs.length) { tabs = s.tabs; active = Math.min(s.active | 0, tabs.length - 1); return true; }
   } catch {}
   return false;
@@ -303,11 +317,14 @@ function selectTab(i) {
   update();
   scrollTo(0, tabs[i].scroll || 0);
 }
+function removeTabData(i) {
+  tabs.splice(i, 1);
+  if (active > i || active >= tabs.length) active = Math.max(0, active - 1);
+}
 function closeTab(i) {
   const el = tabEls()[i];
   if (!el) return;
-  tabs.splice(i, 1);
-  if (active > i || active >= tabs.length) active = Math.max(0, active - 1);
+  removeTabData(i);
   el.classList.add('leaving');
   el.classList.remove('on');
   const anim = el.animate([{ flexBasis: el.offsetWidth + 'px', minWidth: '0px', opacity: 1 }, { flexBasis: '0px', minWidth: '0px', marginRight: '-2px', opacity: 0 }],
@@ -315,6 +332,10 @@ function closeTab(i) {
   // onfinish never fires in a hidden page, so the timer makes sure the element goes
   anim.onfinish = () => el.remove();
   setTimeout(() => el.remove(), 300);
+  afterRemove();
+}
+// Shared by closing a tab and dragging it out to its own window
+function afterRemove() {
   if (!tabs.length) { tabs.push(blank()); addTabEl(tabs[0]); }
   const switched = tabs[active] !== shown;
   update();
@@ -352,25 +373,50 @@ async function openFiles(files) {
   if (skipped.length) toast('Skipped: ' + skipped.join('; '));
 }
 
-/* Reorder tabs: mouse drags after a small move, touch after a short hold (so a quick swipe still scrolls the strip). */
+/* Reorder tabs: mouse drags after a small move, touch after a short hold (so a quick swipe still scrolls the strip).
+   With a mouse, pulling a tab well above or below the strip tears it off into its own window, like a browser. */
 let drag = null, justDragged = false;
+const TEAR_OFF = 48;
 function tabDown(e, tab) {
   if (e.button !== 0 || e.target.closest('.tab-x')) return;
-  drag = { i: indexOf(tab), el: tab, id: e.pointerId, x0: e.clientX, x: e.clientX, mouse: e.pointerType === 'mouse', on: false };
+  drag = { i: indexOf(tab), el: tab, id: e.pointerId, x0: e.clientX, x: e.clientX, y0: e.clientY, y: e.clientY, mouse: e.pointerType === 'mouse', on: false };
   if (!drag.mouse) drag.timer = setTimeout(startDrag, 300);
 }
 function startDrag() {
-  const els = tabEls();
+  const els = tabEls(), r = drag.el.getBoundingClientRect();
   Object.assign(drag, {
-    on: true, els, to: drag.i,
+    on: true, els, to: drag.i, ox: drag.x0 - r.left, oy: drag.y0 - r.top,
     mids: els.map(el => { const r = el.getBoundingClientRect(); return r.left + r.width / 2; }),
-    w: drag.el.getBoundingClientRect().width + 2,
+    w: r.width + 2,
   });
   drag.el.classList.add('dragging');
   try { drag.el.setPointerCapture(drag.id); } catch {}
   navigator.vibrate?.(10);
 }
+// The strip clips anything that leaves it, so a torn-off tab is drawn as a floating copy that follows the pointer.
+function detach() {
+  const g = drag.el.cloneNode(true);
+  g.className = 'tab on ghost';
+  g.style.width = drag.w - 2 + 'px';
+  document.body.append(g);
+  drag.ghost = g;
+  drag.el.style.visibility = 'hidden';
+  drag.to = drag.i;
+  drag.els.forEach((el, j) => { if (j !== drag.i) el.style.transform = j > drag.i ? `translateX(${-drag.w}px)` : ''; });
+}
+function reattach() {
+  drag.ghost.remove();
+  drag.ghost = null;
+  drag.el.style.visibility = '';
+}
 function moveDrag() {
+  const away = drag.mouse && tabs.length > 1 && Math.abs(drag.y - drag.y0) > TEAR_OFF;
+  if (away !== !!drag.ghost) away ? detach() : reattach();
+  if (drag.ghost) {
+    drag.ghost.style.left = drag.x - drag.ox + 'px';
+    drag.ghost.style.top = drag.y - drag.oy + 'px';
+    return;
+  }
   const { i, els, mids, w } = drag;
   const dx = Math.max(mids[0] - mids[i], Math.min(mids[mids.length - 1] - mids[i], drag.x - drag.x0));
   const c = mids[i] + dx;
@@ -387,7 +433,8 @@ function moveDrag() {
 addEventListener('pointermove', e => {
   if (!drag || e.pointerId !== drag.id) return;
   drag.x = e.clientX;
-  const moved = Math.abs(drag.x - drag.x0);
+  drag.y = e.clientY;
+  const moved = Math.max(Math.abs(drag.x - drag.x0), Math.abs(drag.y - drag.y0));
   if (drag.on) moveDrag();
   else if (drag.mouse && moved > 5) { startDrag(); moveDrag(); }
   else if (!drag.mouse && moved > 10) { clearTimeout(drag.timer); drag = null; } // a swipe, let the strip scroll
@@ -400,7 +447,19 @@ function endDrag(e) {
   if (!d.on) return;
   justDragged = true;
   setTimeout(() => justDragged = false);
-  const strip = $('tabs'), from = d.el.getBoundingClientRect().left;
+  const strip = $('tabs');
+  if (d.ghost) {
+    d.ghost.remove();
+    strip.classList.add('settle');
+    d.els.forEach(el => el.style.transform = '');
+    d.el.style.visibility = '';
+    d.el.classList.remove('dragging');
+    if (openInNewWindow(tabs[d.i], e.screenX - d.ox, e.screenY - d.oy)) { d.el.remove(); removeTabData(d.i); afterRemove(); }
+    void strip.offsetWidth;
+    strip.classList.remove('settle');
+    return;
+  }
+  const from = d.el.getBoundingClientRect().left;
   // move the element itself; the neighbours already sit where they belong, so drop their offsets without animating
   strip.classList.add('settle');
   d.els.forEach(el => el.style.transform = '');
@@ -416,6 +475,18 @@ function endDrag(e) {
   const switched = tabs[active] !== shown;
   update();
   if (switched) scrollTo(0, tabs[active].scroll || 0);
+}
+// The tab's file goes to the new window through localStorage, which both windows share; the new window removes it on arrival.
+function openInNewWindow(t, left, top) {
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  try { localStorage.setItem(HANDOFF + id, JSON.stringify({ name: t.name, md: t.md })); }
+  catch { toast("Couldn't move the tab to a new window."); return false; }
+  const w = window.open(location.pathname + '?w=' + id, '_blank',
+    `popup,width=${Math.round(outerWidth * .75)},height=${Math.round(outerHeight * .85)},left=${Math.round(left)},top=${Math.round(top)}`);
+  if (w) return true;
+  localStorage.removeItem(HANDOFF + id);
+  toast('New windows are blocked here. Use the installed README Reader app.');
+  return false;
 }
 addEventListener('pointerup', endDrag);
 addEventListener('pointercancel', endDrag);
