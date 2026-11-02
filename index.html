@@ -440,7 +440,7 @@ async function showLocalImages(t, els) {
   if (!t.dir) {
     const canPick = 'showDirectoryPicker' in window;
     $('imgmsg').textContent = canPick
-      ? `This file has ${n} image${n > 1 ? 's' : ''} saved next to it. Choose the folder the file is in to show ${n > 1 ? 'them' : 'it'}.`
+      ? `This file has ${n} image${n > 1 ? 's' : ''} stored in its project folder. Choose that folder to show ${n > 1 ? 'them' : 'it'}.`
       : `This file has ${n} image${n > 1 ? 's' : ''} saved next to it, which this browser can't show. Use README Reader in Edge or Chrome on a computer.`;
     $('imgbtn').hidden = !canPick;
     $('imgbar').hidden = false;
@@ -454,7 +454,7 @@ async function showLocalImages(t, els) {
       el.setAttribute(el.tagName === 'IMG' ? 'src' : 'srcset', url);
     } catch { missing++; }
   }));
-  if (missing === els.length) toast(`None of the images are in "${t.dir.name}". Choose the folder the file is in.`);
+  if (missing === els.length) toast(`None of the images are in "${t.dir.name}". Choose the project folder that has them (for example the one with a "${els[0].dataset.local.split('/')[0]}" folder).`);
   else if (missing) toast(`${missing} image${missing > 1 ? 's' : ''} couldn't be found in "${t.dir.name}".`);
   if (missing === els.length) { t.dir = null; shown = null; renderDoc(); }
 }
