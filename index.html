@@ -72,6 +72,9 @@
   .page.fade { animation: page-in .28s var(--ease); }
   @keyframes page-in { from { opacity: 0; transform: translateY(8px); } }
   @media (min-width: 1000px) { .page.has-toc { grid-template-columns: minmax(0, 1fr) 220px; } .toc { order: 2; position: sticky; top: 110px; align-self: start; } }
+  .imgbar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 14px; border-radius: 8px;
+    background: color-mix(in srgb, var(--accent) 10%, var(--bg)); font-size: 14px; }
+  .imgbar span { flex: 1; min-width: 0; }
   .toc { font-size: 14px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 14px; max-height: calc(100vh - 140px); overflow: auto; }
   .toc summary { font-weight: 600; cursor: pointer; }
   .toc[open] ul { animation: page-in .2s var(--ease); }
@@ -147,6 +150,7 @@
 
 <div class="page" id="page">
   <details class="toc" id="toc" hidden><summary>Contents</summary><ul id="toc-list"></ul></details>
+  <div class="imgbar" id="imgbar" role="status" hidden><span id="imgmsg"></span><button class="btn" id="imgbtn">Choose folder</button></div>
   <article id="out"></article>
   <section class="start" id="start" hidden>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -236,6 +240,9 @@ function renderDoc() {
   $('out').hidden = isStart;
   $('toc').hidden = true;
   page.classList.remove('has-toc');
+  $('imgbar').hidden = true;
+  blobUrls.forEach(URL.revokeObjectURL);
+  blobUrls = [];
   $('path').textContent = isStart ? 'New tab' : t.name;
   document.title = isStart ? 'README Reader' : t.name;
   if (isStart) { $('stats').textContent = ''; return; }
@@ -246,6 +253,15 @@ function renderDoc() {
   const out = $('out');
   // README content is untrusted, so sanitize the rendered HTML
   out.innerHTML = DOMPurify.sanitize(marked.parse(t.md));
+  // Images with a relative path live in the file's folder; hold them back until that folder is chosen
+  const local = [...out.querySelectorAll('img[src], source[srcset]')].filter(el => {
+    const attr = el.tagName === 'IMG' ? 'src' : 'srcset', val = el.getAttribute(attr);
+    if (/^([a-z][a-z0-9+.-]*:|\/\/|#)/i.test(val)) return false;
+    el.dataset.local = val.trim().split(/\s+/)[0];
+    el.removeAttribute(attr);
+    return true;
+  });
+  showLocalImages(t, local);
 
   out.querySelectorAll('table').forEach(tb => { const w = document.createElement('div'); w.className = 'table'; tb.before(w); w.append(tb); });
   out.querySelectorAll('pre').forEach(pre => {
@@ -327,7 +343,7 @@ async function openFiles(files) {
   for (const f of files) {
     if (!/\.(md|markdown|mdx|txt)$/i.test(f.name) && !f.type.startsWith('text/')) { skipped.push(`${f.name} isn't a Markdown or text file`); continue; }
     if (f.size > MAX_BYTES) { skipped.push(`${f.name} is over 5 MB`); continue; }
-    const tab = { name: f.name, md: await f.text() };
+    const tab = { name: f.name, md: await f.text(), handle: f.handle };
     if (tabs[active]?.md == null) { tabs[active] = tab; nameTab(tabEls()[active], tab.name); }
     else { tabs[active].scroll = scrollY; tabs.push(tab); addTabEl(tab); active = tabs.length - 1; }
     opened++;
@@ -409,6 +425,47 @@ $('new').onclick = newTab;
 $('open-btn').onclick = $('choose').onclick = () => $('file').click();
 $('file').onchange = e => { openFiles([...e.target.files]); e.target.value = ''; };
 
+/* Images saved next to a file. A web page can't read a folder on its own, so the reader asks for it once per tab.
+   shortcut: the folder isn't remembered after the app restarts, so the bar asks again; storing handles in IndexedDB would fix that. */
+let blobUrls = [];
+async function fileAt(dir, path) {
+  const parts = decodeURIComponent(path.split(/[?#]/)[0]).split('/').filter(p => p && p !== '.');
+  if (!parts.length || parts.includes('..')) throw new Error('outside folder');
+  for (const p of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(p);
+  return (await dir.getFileHandle(parts.at(-1))).getFile();
+}
+async function showLocalImages(t, els) {
+  if (!els.length) return;
+  const n = els.filter(el => el.tagName === 'IMG').length || els.length;
+  if (!t.dir) {
+    const canPick = 'showDirectoryPicker' in window;
+    $('imgmsg').textContent = canPick
+      ? `This file has ${n} image${n > 1 ? 's' : ''} saved next to it. Choose the folder the file is in to show ${n > 1 ? 'them' : 'it'}.`
+      : `This file has ${n} image${n > 1 ? 's' : ''} saved next to it, which this browser can't show. Use README Reader in Edge or Chrome on a computer.`;
+    $('imgbtn').hidden = !canPick;
+    $('imgbar').hidden = false;
+    return;
+  }
+  let missing = 0;
+  await Promise.all(els.map(async el => {
+    try {
+      const url = URL.createObjectURL(await fileAt(t.dir, el.dataset.local));
+      blobUrls.push(url);
+      el.setAttribute(el.tagName === 'IMG' ? 'src' : 'srcset', url);
+    } catch { missing++; }
+  }));
+  if (missing === els.length) toast(`None of the images are in "${t.dir.name}". Choose the folder the file is in.`);
+  else if (missing) toast(`${missing} image${missing > 1 ? 's' : ''} couldn't be found in "${t.dir.name}".`);
+  if (missing === els.length) { t.dir = null; shown = null; renderDoc(); }
+}
+$('imgbtn').onclick = async () => {
+  const t = tabs[active];
+  try { t.dir = await showDirectoryPicker({ id: 'readme-folder', ...(t.handle && { startIn: t.handle }) }); }
+  catch (e) { if (e.name !== 'AbortError') toast("Folders can't be opened here. Use the installed README Reader app."); return; }
+  shown = null;
+  renderDoc();
+};
+
 // Links inside a file (#section) scroll to the matching heading.
 document.addEventListener('click', e => {
   const a = e.target.closest('#out a[href^="#"], .toc a');
@@ -440,5 +497,8 @@ tabs.forEach(t => $('tabs').append(makeTab(t)));
 update();
 
 // Files opened from Windows (double-click, Open with) once the reader is installed as an app
-if ('launchQueue' in window) launchQueue.setConsumer(p => { if (p.files.length) Promise.all(p.files.map(h => h.getFile())).then(openFiles); });
+// The file handle is kept so the folder picker can start in that file's folder
+if ('launchQueue' in window) launchQueue.setConsumer(p => {
+  if (p.files.length) Promise.all(p.files.map(async h => Object.assign(await h.getFile(), { handle: h }))).then(openFiles);
+});
 </script>
