@@ -269,6 +269,7 @@ function renderDoc() {
   $('out').hidden = isStart || !!t.editing;
   $('editor').hidden = isStart || !t.editing;
   $('edit-btn').hidden = isStart;
+  $('open-btn').hidden = !isStart;
   $('edit-btn').textContent = t.editing ? 'Done' : 'Edit';
   $('edit-btn').setAttribute('aria-pressed', !!t.editing);
   showSaveState(t);
