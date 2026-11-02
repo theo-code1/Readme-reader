@@ -60,6 +60,7 @@
   .tab.dirty .tab-title::before { content: "● "; color: var(--accent); }
   #edit-btn[aria-pressed="true"] { background: var(--fg); border-color: var(--fg); color: var(--bg); }
   #save-status { white-space: nowrap; }
+  #save-status:empty { display: none; } /* an empty status still took a slot and doubled the gap between buttons */
   #editor { grid-column: 1 / -1; width: 100%; box-sizing: border-box; min-height: 70vh; resize: vertical; padding: 16px;
     font: 14px/1.6 var(--mono); color: var(--fg); background: var(--code-bg); border: 1px solid var(--edge); border-radius: 8px; tab-size: 2; }
   #editor:focus { outline: 2px solid var(--accent); outline-offset: 0; }
