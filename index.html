@@ -57,6 +57,12 @@
   .tab-x { flex: none; width: 22px; height: 22px; margin-right: 6px; border: 0; border-radius: 50%; background: none; font-size: 16px; line-height: 1;
     transition: background .15s, transform .15s; }
   .tab-x:hover { background: var(--hover); color: var(--fg); transform: rotate(90deg); }
+  .tab.dirty .tab-title::before { content: "● "; color: var(--accent); }
+  #edit-btn[aria-pressed="true"] { background: var(--fg); border-color: var(--fg); color: var(--bg); }
+  #save-btn { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  #editor { grid-column: 1 / -1; width: 100%; box-sizing: border-box; min-height: 70vh; resize: vertical; padding: 16px;
+    font: 14px/1.6 var(--mono); color: var(--fg); background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; tab-size: 2; }
+  #editor:focus { outline: 2px solid var(--accent); outline-offset: 0; }
   #new { flex: none; width: 30px; height: 30px; margin: 0 0 3px 4px; border: 0; border-radius: 50%; background: none; font-size: 20px; line-height: 1; color: var(--muted);
     transition: background .15s, color .15s, transform .25s var(--ease); }
   #new:hover { background: var(--hover); color: var(--fg); transform: rotate(90deg); }
@@ -147,12 +153,16 @@
   <div class="toolbar">
     <span id="path"></span>
     <span id="stats"></span>
+    <button class="btn" id="edit-btn" hidden>Edit</button>
+    <button class="btn" id="save-btn" hidden title="Save (Ctrl+S)">Save</button>
     <button class="btn" id="open-btn">Open files</button>
   </div>
 </div>
 
 <div class="page" id="page">
   <details class="toc" id="toc" hidden><summary>Contents</summary><ul id="toc-list"></ul></details>
+  <label class="sr" for="editor">File text</label>
+  <textarea id="editor" spellcheck="false" hidden></textarea>
   <div class="imgbar" id="imgbar" role="status" hidden><span id="imgmsg"></span><button class="btn" id="imgbtn">Choose folder</button></div>
   <article id="out"></article>
   <section class="start" id="start" hidden>
@@ -188,7 +198,7 @@ const store = () => winId ? sessionStorage : localStorage;
 const storeKey = winId ? KEY + ':' + winId : KEY;
 
 function save() {
-  try { store().setItem(storeKey, JSON.stringify({ tabs: tabs.map(({ name, md }) => ({ name, md })), active })); }
+  try { store().setItem(storeKey, JSON.stringify({ tabs: tabs.map(({ name, md, dirty }) => ({ name, md, dirty })), active })); }
   catch { /* storage full or blocked: tabs just won't be restored */ }
 }
 function restore() {
@@ -241,7 +251,11 @@ function addTabEl(t) {
     { duration: ms(220), easing: 'cubic-bezier(.2, .8, .2, 1)' });
 }
 function syncActive() {
-  tabEls().forEach((el, j) => { el.classList.toggle('on', j === active); el.firstChild.setAttribute('aria-selected', j === active); });
+  tabEls().forEach((el, j) => {
+    el.classList.toggle('on', j === active);
+    el.classList.toggle('dirty', !!tabs[j]?.dirty);
+    el.firstChild.setAttribute('aria-selected', j === active);
+  });
   tabEls()[active]?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: reduced() ? 'auto' : 'smooth' });
 }
 
@@ -251,7 +265,12 @@ function renderDoc() {
   shown = t;
   page.classList.remove('fade'); void page.offsetWidth; page.classList.add('fade');
   $('start').hidden = !isStart;
-  $('out').hidden = isStart;
+  $('out').hidden = isStart || !!t.editing;
+  $('editor').hidden = isStart || !t.editing;
+  $('edit-btn').hidden = isStart;
+  $('edit-btn').textContent = t.editing ? 'Preview' : 'Edit';
+  $('edit-btn').setAttribute('aria-pressed', !!t.editing);
+  $('save-btn').hidden = isStart || !(t.editing || t.dirty);
   $('toc').hidden = true;
   page.classList.remove('has-toc');
   $('imgbar').hidden = true;
@@ -261,8 +280,8 @@ function renderDoc() {
   document.title = isStart ? 'README Reader' : t.name;
   if (isStart) { $('stats').textContent = ''; return; }
 
-  const words = t.md.split(/\s+/).filter(Boolean).length;
-  $('stats').textContent = `${words.toLocaleString()} words · ${Math.max(1, Math.round(words / 230))} min read`;
+  showStats(t);
+  if (t.editing) { $('editor').value = t.md; return; }
 
   const out = $('out');
   // README content is untrusted, so sanitize the rendered HTML
@@ -324,6 +343,7 @@ function removeTabData(i) {
 function closeTab(i) {
   const el = tabEls()[i];
   if (!el) return;
+  if (tabs[i].dirty && !confirm(`${tabs[i].name} has changes that aren't saved. Close it anyway?`)) return;
   removeTabData(i);
   el.classList.add('leaving');
   el.classList.remove('on');
@@ -336,7 +356,13 @@ function closeTab(i) {
 }
 // Shared by closing a tab and dragging it out to its own window
 function afterRemove() {
-  if (!tabs.length) { tabs.push(blank()); addTabEl(tabs[0]); }
+  if (!tabs.length) {
+    save();
+    window.close();
+    // close() is refused for some windows (an ordinary browser tab, the claude.ai page); there, show an empty tab instead
+    setTimeout(() => { if (!tabs.length) { tabs.push(blank()); addTabEl(tabs[0]); active = 0; update(); } }, 200);
+    return;
+  }
   const switched = tabs[active] !== shown;
   update();
   if (switched) scrollTo(0, tabs[active].scroll || 0);
@@ -493,7 +519,73 @@ addEventListener('pointercancel', endDrag);
 $('tabs').addEventListener('touchmove', e => { if (drag?.on) e.preventDefault(); }, { passive: false });
 
 $('new').onclick = newTab;
-$('open-btn').onclick = $('choose').onclick = () => $('file').click();
+// The file picker hands back file handles, which is what lets Save write to the same file later
+const withHandle = async h => Object.assign(await h.getFile(), { handle: h });
+$('open-btn').onclick = $('choose').onclick = async () => {
+  if (!('showOpenFilePicker' in window)) return $('file').click();
+  try {
+    const hs = await showOpenFilePicker({ multiple: true, types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown', '.mdx'], 'text/plain': ['.txt'] } }] });
+    openFiles(await Promise.all(hs.map(withHandle)));
+  } catch (e) { if (e.name !== 'AbortError') $('file').click(); }
+};
+
+/* Editing */
+function showStats(t) {
+  const words = t.md.split(/\s+/).filter(Boolean).length;
+  $('stats').textContent = `${words.toLocaleString()} words · ${Math.max(1, Math.round(words / 230))} min read`;
+}
+$('edit-btn').onclick = () => {
+  const t = tabs[active];
+  t.editing = !t.editing;
+  shown = null;
+  renderDoc();
+  if (t.editing) $('editor').focus();
+};
+let saveTimer;
+$('editor').oninput = () => {
+  const t = tabs[active];
+  t.md = $('editor').value;
+  t.dirty = true;
+  $('save-btn').hidden = false;
+  syncActive();
+  showStats(t);
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(save, 400);
+};
+async function saveFile(t) {
+  try {
+    if (!t.handle && 'showSaveFilePicker' in window)
+      t.handle = await showSaveFilePicker({ suggestedName: t.name, types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown'] } }] });
+    if (t.handle) {
+      const w = await t.handle.createWritable();
+      await w.write(t.md);
+      await w.close();
+      t.name = t.handle.name;
+      nameTab(tabEls()[tabs.indexOf(t)], t.name);
+      toast(`Saved ${t.name}`);
+    } else {
+      // no file access in this browser (phones): hand over a copy instead
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([t.md], { type: 'text/markdown' }));
+      a.download = t.name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      toast(`Downloaded a copy of ${t.name}`);
+    }
+    t.dirty = false;
+    $('save-btn').hidden = !t.editing;
+    $('path').textContent = t.name;
+    syncActive();
+    save();
+  } catch (e) {
+    if (e.name !== 'AbortError') toast(`Couldn't save ${t.name}: ${e.message}`);
+  }
+}
+$('save-btn').onclick = () => saveFile(tabs[active]);
+addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && tabs[active]?.md != null) { e.preventDefault(); saveFile(tabs[active]); }
+});
+addEventListener('beforeunload', e => { if (tabs.some(t => t.dirty)) e.preventDefault(); });
 $('file').onchange = e => { openFiles([...e.target.files]); e.target.value = ''; };
 
 /* Images saved next to a file. A web page can't read a folder on its own, so the reader asks for it once per tab.
@@ -556,7 +648,13 @@ addEventListener('dragover', e => e.preventDefault());
 addEventListener('drop', e => {
   e.preventDefault();
   dragDepth = 0; showDrop(false);
-  if (e.dataTransfer.files.length) openFiles([...e.dataTransfer.files]);
+  // Both lists have to be read now, before the drop event ends
+  const items = [...e.dataTransfer.items].filter(i => i.kind === 'file');
+  const files = items.map(i => i.getAsFile());
+  const handles = items.map(i => i.getAsFileSystemHandle?.());
+  Promise.all(handles)
+    .then(hs => openFiles(files.map((f, k) => hs[k]?.kind === 'file' ? Object.assign(f, { handle: hs[k] }) : f)))
+    .catch(() => openFiles(files));
 });
 
 if (!restore()) tabs = [blank()];
@@ -570,6 +668,6 @@ update();
 // Files opened from Windows (double-click, Open with) once the reader is installed as an app
 // The file handle is kept so the folder picker can start in that file's folder
 if ('launchQueue' in window) launchQueue.setConsumer(p => {
-  if (p.files.length) Promise.all(p.files.map(async h => Object.assign(await h.getFile(), { handle: h }))).then(openFiles);
+  if (p.files.length) Promise.all(p.files.map(withHandle)).then(openFiles);
 });
 </script>
