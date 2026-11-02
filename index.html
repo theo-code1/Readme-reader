@@ -12,7 +12,7 @@
 <style>
   /* browser-style tab strip on top, one reading column with a contents panel beside it on wide screens */
   :root {
-    --bg: #fbfbf9; --fg: #22262b; --muted: #6a717a; --line: #e2e4e1; --code-bg: #f0f2ef; --accent: #2f6f8f;
+    --bg: #fbfbf9; --fg: #22262b; --muted: #555c64; --line: #e2e4e1; --edge: #8a9198; --code-bg: #f0f2ef; --accent: #2f6f8f;
     --chrome: #e4e8e9; --hover: #d5dbdd; --lift: rgb(20 30 40 / .18);
     --display: "Source Serif 4", Georgia, serif;
     --body: "IBM Plex Sans", system-ui, sans-serif;
@@ -22,10 +22,10 @@
     --ease: cubic-bezier(.2, .8, .2, 1);
   }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
-    --bg: #15181b; --fg: #e4e7ea; --muted: #9aa2ab; --line: #2b3035; --code-bg: #1e2226; --accent: #7cb7d4;
+    --bg: #15181b; --fg: #e4e7ea; --muted: #9aa2ab; --line: #2b3035; --edge: #6b737b; --code-bg: #1e2226; --accent: #7cb7d4;
     --chrome: #0c0e10; --hover: #23282d; --lift: rgb(0 0 0 / .5); color-scheme: dark } }
   :root[data-theme="dark"] {
-    --bg: #15181b; --fg: #e4e7ea; --muted: #9aa2ab; --line: #2b3035; --code-bg: #1e2226; --accent: #7cb7d4;
+    --bg: #15181b; --fg: #e4e7ea; --muted: #9aa2ab; --line: #2b3035; --edge: #6b737b; --code-bg: #1e2226; --accent: #7cb7d4;
     --chrome: #0c0e10; --hover: #23282d; --lift: rgb(0 0 0 / .5); color-scheme: dark }
 
   [hidden] { display: none !important; }
@@ -54,14 +54,14 @@
   @keyframes lift { from { rotate: 0deg; scale: .96; } }
   .tab-title { flex: 1; min-width: 0; height: 100%; padding: 0 4px 0 12px; border: 0; background: none; text-align: left;
     font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .tab-x { flex: none; width: 22px; height: 22px; margin-right: 6px; border: 0; border-radius: 50%; background: none; font-size: 16px; line-height: 1;
+  .tab-x { flex: none; width: 24px; height: 24px; margin-right: 6px; border: 0; border-radius: 50%; background: none; font-size: 16px; line-height: 1;
     transition: background .15s, transform .15s; }
   .tab-x:hover { background: var(--hover); color: var(--fg); transform: rotate(90deg); }
   .tab.dirty .tab-title::before { content: "● "; color: var(--accent); }
   #edit-btn[aria-pressed="true"] { background: var(--fg); border-color: var(--fg); color: var(--bg); }
-  #save-btn { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  #save-status { white-space: nowrap; }
   #editor { grid-column: 1 / -1; width: 100%; box-sizing: border-box; min-height: 70vh; resize: vertical; padding: 16px;
-    font: 14px/1.6 var(--mono); color: var(--fg); background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; tab-size: 2; }
+    font: 14px/1.6 var(--mono); color: var(--fg); background: var(--code-bg); border: 1px solid var(--edge); border-radius: 8px; tab-size: 2; }
   #editor:focus { outline: 2px solid var(--accent); outline-offset: 0; }
   #new { flex: none; width: 30px; height: 30px; margin: 0 0 3px 4px; border: 0; border-radius: 50%; background: none; font-size: 20px; line-height: 1; color: var(--muted);
     transition: background .15s, color .15s, transform .25s var(--ease); }
@@ -69,7 +69,7 @@
   #new:active { transform: rotate(90deg) scale(.85); }
   .toolbar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 8px var(--gutter-r) 8px var(--gutter-l); border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
   #path { font-family: var(--mono); min-width: 0; overflow-wrap: anywhere; flex: 1; }
-  .btn { border: 1px solid var(--line); background: var(--bg); border-radius: 6px; padding: 4px 12px; font-size: 13px;
+  .btn { border: 1px solid var(--edge); background: var(--bg); border-radius: 6px; padding: 4px 12px; font-size: 13px;
     transition: border-color .15s, transform .12s, background .15s; }
   .btn:hover { border-color: var(--muted); }
   .btn:active { transform: scale(.96); }
@@ -105,8 +105,7 @@
   #out .code { position: relative; }
   #out pre { background: var(--code-bg); padding: 14px 16px; border-radius: 6px; overflow-x: auto; line-height: 1.5; }
   #out pre code { background: none; padding: 0; }
-  #out .copy { position: absolute; top: 8px; right: 8px; opacity: .6; }
-  #out .code:hover .copy, #out .copy:focus-visible { opacity: 1; }
+  #out .copy { position: absolute; top: 8px; right: 8px; }
   #out .copy.done { animation: pop .3s var(--ease); border-color: var(--accent); color: var(--accent); opacity: 1; }
   @keyframes pop { 50% { transform: scale(1.1); } }
   #out blockquote { margin: 0; padding-left: 16px; border-left: 3px solid var(--line); color: var(--muted); }
@@ -154,7 +153,8 @@
     <span id="path"></span>
     <span id="stats"></span>
     <button class="btn" id="edit-btn" hidden>Edit</button>
-    <button class="btn" id="save-btn" hidden title="Save (Ctrl+S)">Save</button>
+    <span id="save-status" role="status"></span>
+    <button class="btn" id="save-where" hidden></button>
     <button class="btn" id="open-btn">Open files</button>
   </div>
 </div>
@@ -268,9 +268,9 @@ function renderDoc() {
   $('out').hidden = isStart || !!t.editing;
   $('editor').hidden = isStart || !t.editing;
   $('edit-btn').hidden = isStart;
-  $('edit-btn').textContent = t.editing ? 'Preview' : 'Edit';
+  $('edit-btn').textContent = t.editing ? 'Done' : 'Edit';
   $('edit-btn').setAttribute('aria-pressed', !!t.editing);
-  $('save-btn').hidden = isStart || !(t.editing || t.dirty);
+  showSaveState(t);
   $('toc').hidden = true;
   page.classList.remove('has-toc');
   $('imgbar').hidden = true;
@@ -343,7 +343,11 @@ function removeTabData(i) {
 function closeTab(i) {
   const el = tabEls()[i];
   if (!el) return;
-  if (tabs[i].dirty && !confirm(`${tabs[i].name} has changes that aren't saved. Close it anyway?`)) return;
+  const t = tabs[i];
+  // a file with somewhere to go just finishes saving; only changes with nowhere to go need a warning
+  // (closing the last tab closes the window, so the write has to finish first)
+  if (t.dirty && t.handle && !t.saveError) return autoSave(t).then(() => { if (!t.dirty) closeTab(tabs.indexOf(t)); });
+  if (t.dirty && !confirm(`${t.name} has changes that aren't saved to a file. Close it anyway?`)) return;
   removeTabData(i);
   el.classList.add('leaving');
   el.classList.remove('on');
@@ -539,51 +543,89 @@ $('edit-btn').onclick = () => {
   t.editing = !t.editing;
   shown = null;
   renderDoc();
-  if (t.editing) $('editor').focus();
+  if (!t.editing) return;
+  $('editor').focus();
+  // ask for permission to write now, while the click still counts as the user's own action
+  t.handle?.requestPermission?.({ mode: 'readwrite' }).catch(() => {});
 };
+
+/* Auto-save: edits are written to the file shortly after you stop typing.
+   Without a file to write to (a restored tab, or a browser with no file access) they are kept in the app until you choose a place. */
+const canPickFiles = 'showSaveFilePicker' in window;
 let saveTimer;
 $('editor').oninput = () => {
   const t = tabs[active];
   t.md = $('editor').value;
   t.dirty = true;
-  $('save-btn').hidden = false;
+  t.saveError = null;
   syncActive();
   showStats(t);
+  showSaveState(t);
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(save, 400);
+  saveTimer = setTimeout(() => autoSave(t), 700);
 };
-async function saveFile(t) {
+async function autoSave(t) {
+  clearTimeout(saveTimer);
+  save();
+  if (!t.dirty || !t.handle) return showSaveState(t);
+  t.saving = true;
+  showSaveState(t);
   try {
-    if (!t.handle && 'showSaveFilePicker' in window)
+    const w = await t.handle.createWritable();
+    await w.write(t.md);
+    await w.close();
+    t.dirty = false;
+  } catch (e) {
+    t.saveError = e.name === 'NotAllowedError' ? 'Saving to the file isn\'t allowed' : `Couldn't save: ${e.message}`;
+  }
+  t.saving = false;
+  syncActive();
+  save();
+  showSaveState(t);
+}
+function showSaveState(t) {
+  if (tabs[active] !== t) return;
+  const s = $('save-status'), b = $('save-where');
+  b.hidden = true;
+  if (t.md == null || (!t.editing && !t.dirty)) return s.textContent = '';
+  if (t.saving) return s.textContent = 'Saving…';
+  if (!t.dirty) return s.textContent = 'Saved';
+  if (t.saveError) { s.textContent = t.saveError; b.textContent = 'Allow saving'; }
+  else if (!t.handle) { s.textContent = 'Changes kept in this app'; b.textContent = canPickFiles ? 'Choose where to save' : 'Download a copy'; }
+  else return s.textContent = 'Saving…';
+  b.hidden = false;
+}
+$('save-where').onclick = async () => {
+  const t = tabs[active];
+  try {
+    if (t.handle) await t.handle.requestPermission?.({ mode: 'readwrite' });
+    else if (canPickFiles) {
       t.handle = await showSaveFilePicker({ suggestedName: t.name, types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown'] } }] });
-    if (t.handle) {
-      const w = await t.handle.createWritable();
-      await w.write(t.md);
-      await w.close();
       t.name = t.handle.name;
-      nameTab(tabEls()[tabs.indexOf(t)], t.name);
-      toast(`Saved ${t.name}`);
+      nameTab(tabEls()[active], t.name);
+      $('path').textContent = t.name;
     } else {
-      // no file access in this browser (phones): hand over a copy instead
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([t.md], { type: 'text/markdown' }));
       a.download = t.name;
       a.click();
       setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-      toast(`Downloaded a copy of ${t.name}`);
+      return toast(`Downloaded a copy of ${t.name}`);
     }
-    t.dirty = false;
-    $('save-btn').hidden = !t.editing;
-    $('path').textContent = t.name;
-    syncActive();
-    save();
   } catch (e) {
-    if (e.name !== 'AbortError') toast(`Couldn't save ${t.name}: ${e.message}`);
+    if (e.name !== 'AbortError') toast(`Couldn't choose a place to save: ${e.message}`);
+    return;
   }
-}
-$('save-btn').onclick = () => saveFile(tabs[active]);
+  t.saveError = null;
+  autoSave(t);
+};
+// Ctrl+S saves right away instead of waiting for the pause
 addEventListener('keydown', e => {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && tabs[active]?.md != null) { e.preventDefault(); saveFile(tabs[active]); }
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && tabs[active]?.md != null) {
+    e.preventDefault();
+    const t = tabs[active];
+    if (!t.handle && t.dirty) $('save-where').click(); else autoSave(t);
+  }
 });
 addEventListener('beforeunload', e => { if (tabs.some(t => t.dirty)) e.preventDefault(); });
 $('file').onchange = e => { openFiles([...e.target.files]); e.target.value = ''; };
