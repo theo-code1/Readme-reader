@@ -529,15 +529,13 @@ function showSlot(slot) {
 }
 function receiveTab(t, slot) {
   tabs[active].scroll = scrollY;
-  if (tabs.length === 1 && tabs[0].md == null) { tabs[0] = t; nameTab(tabEls()[0], t.name); active = 0; }
-  else {
-    slot = Math.min(slot, tabs.length);
-    tabs.splice(slot, 0, t);
-    addTabEl(t);
-    const els = tabEls();
-    if (slot < els.length - 1) els[slot].before(els.at(-1));
-    active = slot;
-  }
+  // join beside whatever is there, empty tabs included, like a browser
+  slot = Math.min(slot, tabs.length);
+  tabs.splice(slot, 0, t);
+  addTabEl(t);
+  const els = tabEls();
+  if (slot < els.length - 1) els[slot].before(els.at(-1));
+  active = slot;
   update();
   scrollTo(0, 0);
   window.focus();
