@@ -562,10 +562,15 @@ const ME = Math.random().toString(36).slice(2);
 const bc = 'BroadcastChannel' in window ? new BroadcastChannel('readme-reader-windows') : null;
 const waiting = new Map(), taking = new Map();
 // screen point -> this page's coordinates, or null when it's outside; the frame (borders, title bar) is outer size minus inner size
-function toClient(sx, sy) {
+function toClient(sx, sy, top = 0) {
   const side = (outerWidth - innerWidth) / 2;
   const x = sx - screenX - side, y = sy - screenY - (outerHeight - innerHeight - side);
-  return x >= 0 && y >= 0 && x < innerWidth && y < innerHeight ? { x, y } : null;
+  return x >= 0 && y >= top && x < innerWidth && y < innerHeight ? { x, y } : null;
+}
+// only the header (title bar and tab strip) takes a dropped tab, like a browser; over the document it opens a new window instead
+function overTabs(sx, sy) {
+  const p = toClient(sx, sy, -(outerHeight - innerHeight));
+  return p && p.y < document.querySelector('.tabbar').getBoundingClientRect().bottom + 8 ? p : null;
 }
 const slotAt = x => tabEls().filter(el => { const r = el.getBoundingClientRect(); return r.left + r.width / 2 < x; }).length;
 function showSlot(slot) {
@@ -614,7 +619,7 @@ if (bc) bc.onmessage = ({ data: m }) => {
   if (m.from === ME) return;
   if (m.type === 'take') return waiting.get(m.req)?.(m.from);
   if (m.type === 'give') { if (m.to === ME) receiveTab(m.tab, taking.get(m.req)); return taking.delete(m.req); }
-  const p = m.x != null && toClient(m.x, m.y);
+  const p = m.x != null && overTabs(m.x, m.y);
   showSlot(p && m.type === 'hover' ? slotAt(p.x) : -1);
   if (m.type === 'drop' && p) { taking.set(m.req, slotAt(p.x)); bc.postMessage({ type: 'take', from: ME, req: m.req }); }
 };
