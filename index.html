@@ -139,6 +139,8 @@
     background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 8px; font-size: 14px; pointer-events: none;
     opacity: 0; transform: translate(-50%, 16px); transition: opacity .2s, transform .25s var(--ease); }
   #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toast.show.actionable { pointer-events: auto; }
+  .toast-act { margin-left: 12px; padding: 2px 4px; border: 0; background: none; color: inherit; font-weight: 600; text-decoration: underline; }
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
@@ -254,6 +256,7 @@ function syncActive() {
   tabEls().forEach((el, j) => {
     el.classList.toggle('on', j === active);
     el.classList.toggle('dirty', !!tabs[j]?.dirty);
+    if (tabs[j]) el.firstChild.title = tabs[j].dirty ? `${tabs[j].name}: unsaved changes` : tabs[j].name;
     el.firstChild.setAttribute('aria-selected', j === active);
   });
   tabEls()[active]?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: reduced() ? 'auto' : 'smooth' });
@@ -345,10 +348,11 @@ function closeTab(i) {
   const el = tabEls()[i];
   if (!el) return;
   const t = tabs[i];
-  // a file with somewhere to go just finishes saving; only changes with nowhere to go need a warning
-  // (closing the last tab closes the window, so the write has to finish first)
+  // A file with somewhere to go finishes saving first (closing the last tab closes the window, so the write has to land).
+  // If that fails, the next click closes it with Undo.
   if (t.dirty && t.handle && !t.saveError) return autoSave(t).then(() => { if (!t.dirty) closeTab(tabs.indexOf(t)); });
-  if (t.dirty && !confirm(`${t.name} has changes that aren't saved to a file. Close it anyway?`)) return;
+  // Changes with nowhere to go: close anyway and offer Undo; a confirm() can be silently suppressed and leave the tab stuck
+  const unsaved = t.dirty;
   removeTabData(i);
   el.classList.add('leaving');
   el.classList.remove('on');
@@ -357,10 +361,18 @@ function closeTab(i) {
   // onfinish never fires in a hidden page, so the timer makes sure the element goes
   anim.onfinish = () => el.remove();
   setTimeout(() => el.remove(), 300);
-  afterRemove();
+  afterRemove(unsaved);
+  if (unsaved) toast(`Closed ${t.name} with unsaved changes.`, { label: 'Undo', fn: () => reopenTab(t) });
 }
-// Shared by closing a tab and dragging it out to its own window
-function afterRemove() {
+function reopenTab(t) {
+  if (tabs.length === 1 && tabs[0].md == null) { tabs[0] = t; nameTab(tabEls()[0], t.name); active = 0; }
+  else { tabs[active].scroll = scrollY; tabs.push(t); addTabEl(t); active = tabs.length - 1; }
+  update();
+}
+// Shared by closing a tab and dragging it out to its own window.
+// keepWindow: the closed tab can still be undone, so don't close the window under it.
+function afterRemove(keepWindow) {
+  if (!tabs.length && keepWindow) { tabs.push(blank()); addTabEl(tabs[0]); }
   if (!tabs.length) {
     save();
     window.close();
@@ -381,11 +393,20 @@ function newTab() {
   scrollTo(0, 0);
 }
 
-function toast(msg) {
+function toast(msg, action) {
   const t = $('toast');
-  t.textContent = msg; t.classList.add('show');
+  t.replaceChildren(msg);
+  if (action) {
+    const b = document.createElement('button');
+    b.className = 'toast-act';
+    b.textContent = action.label;
+    b.onclick = () => { t.classList.remove('show'); action.fn(); };
+    t.append(b);
+  }
+  t.classList.toggle('actionable', !!action);
+  t.classList.add('show');
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => t.classList.remove('show'), 4000);
+  toast.timer = setTimeout(() => t.classList.remove('show'), action ? 8000 : 4000);
 }
 
 // The first file replaces a blank "New tab"; the rest open as new tabs.
