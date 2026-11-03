@@ -54,9 +54,8 @@
   @keyframes lift { from { rotate: 0deg; scale: .96; } }
   .tab-title { flex: 1; min-width: 0; height: 100%; padding: 0 4px 0 12px; border: 0; background: none; text-align: left;
     font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .tab-x { flex: none; width: 24px; height: 24px; margin-right: 6px; border: 0; border-radius: 50%; background: none; font-size: 16px; line-height: 1;
-    transition: background .15s, transform .15s; }
-  .tab-x:hover { background: var(--hover); color: var(--fg); transform: rotate(90deg); }
+  .tab-x { flex: none; width: 24px; height: 24px; margin-right: 6px; border: 0; border-radius: 50%; background: none; font-size: 16px; line-height: 1; }
+  .tab-x:hover { background: var(--hover); color: var(--fg); }
   .tab.dirty .tab-title::before { content: "● "; color: var(--accent); }
   #edit-btn[aria-pressed="true"] { background: var(--fg); border-color: var(--fg); color: var(--bg); }
   #save-status { white-space: nowrap; }
