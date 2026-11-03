@@ -49,9 +49,6 @@
   .tab.dragging { z-index: 2; overflow: visible; transition: background .15s, box-shadow .15s; background: var(--bg); color: var(--fg);
     box-shadow: 0 6px 18px var(--lift); border-radius: 8px; cursor: grabbing; }
   #tabs.settle .tab { transition: none; }
-  .tab.ghost { position: fixed; z-index: 40; pointer-events: none; overflow: hidden; background: var(--bg); color: var(--fg); border-radius: 8px;
-    box-shadow: 0 12px 32px var(--lift), 0 0 0 1px var(--line); rotate: -2deg; animation: lift .18s var(--ease); }
-  @keyframes lift { from { rotate: 0deg; scale: .96; } }
   /* where a tab dragged from another window will land */
   .tabbar { position: relative; }
   .drop-mark { position: absolute; bottom: 4px; width: 3px; height: 28px; border-radius: 2px; background: var(--accent); pointer-events: none; }
@@ -429,19 +426,21 @@ async function openFiles(files) {
   if (skipped.length) toast('Skipped: ' + skipped.join('; '));
 }
 
-/* Reorder tabs: mouse drags after a small move, touch after a short hold (so a quick swipe still scrolls the strip).
-   With a mouse, pulling a tab well above or below the strip tears it off into its own window, like a browser. */
+/* Reorder tabs. Touch: hold, then slide (so a quick swipe still scrolls the strip).
+   Mouse: the browser's own drag-and-drop, the only drag whose picture can leave the window. Drop the tab on another
+   README Reader window's tab strip to move it there, or anywhere else to open it in its own window, like a browser. */
 let drag = null, justDragged = false;
-const TEAR_OFF = 48;
+const TAB_TYPE = 'application/x-readme-reader-tab';
 function tabDown(e, tab) {
-  if (e.button !== 0 || e.target.closest('.tab-x')) return;
-  drag = { i: indexOf(tab), el: tab, id: e.pointerId, x0: e.clientX, x: e.clientX, y0: e.clientY, y: e.clientY, mouse: e.pointerType === 'mouse', on: false };
-  if (!drag.mouse) drag.timer = setTimeout(startDrag, 300);
+  tab.draggable = e.pointerType === 'mouse';
+  if (e.button !== 0 || e.pointerType === 'mouse' || e.target.closest('.tab-x')) return;
+  drag = { i: indexOf(tab), el: tab, id: e.pointerId, x0: e.clientX, x: e.clientX, y0: e.clientY, y: e.clientY, on: false };
+  drag.timer = setTimeout(startDrag, 300);
 }
 function startDrag() {
   const els = tabEls(), r = drag.el.getBoundingClientRect();
   Object.assign(drag, {
-    on: true, els, to: drag.i, ox: drag.x0 - r.left, oy: drag.y0 - r.top,
+    on: true, els, to: drag.i,
     mids: els.map(el => { const r = el.getBoundingClientRect(); return r.left + r.width / 2; }),
     w: r.width + 2,
   });
@@ -449,36 +448,7 @@ function startDrag() {
   try { drag.el.setPointerCapture(drag.id); } catch {}
   navigator.vibrate?.(10);
 }
-// The strip clips anything that leaves it, so a torn-off tab is drawn as a floating copy that follows the pointer.
-function detach() {
-  const g = drag.el.cloneNode(true);
-  g.className = 'tab on ghost';
-  g.style.width = drag.w - 2 + 'px';
-  document.body.append(g);
-  drag.ghost = g;
-  drag.el.style.visibility = 'hidden';
-  drag.to = drag.i;
-  drag.els.forEach((el, j) => { if (j !== drag.i) el.style.transform = j > drag.i ? `translateX(${-drag.w}px)` : ''; });
-}
-function reattach() {
-  bc?.postMessage({ type: 'hover', from: ME });
-  drag.ghost.remove();
-  drag.ghost = null;
-  drag.el.style.visibility = '';
-}
 function moveDrag() {
-  // a lone tab tears off too: the new window opens where it's dropped and this one closes, so the window seems to move
-  const away = drag.mouse && Math.abs(drag.y - drag.y0) > TEAR_OFF;
-  if (away !== !!drag.ghost) away ? detach() : reattach();
-  if (drag.ghost) {
-    drag.ghost.style.left = drag.x - drag.ox + 'px';
-    drag.ghost.style.top = drag.y - drag.oy + 'px';
-    // past this window's edge the floating tab would be cut off, so the window under the pointer shows where it will land instead
-    const outside = !toClient(drag.sx, drag.sy);
-    drag.ghost.hidden = outside;
-    bc?.postMessage(outside ? { type: 'hover', from: ME, x: drag.sx, y: drag.sy } : { type: 'hover', from: ME });
-    return;
-  }
   const { i, els, mids, w } = drag;
   const dx = Math.max(mids[0] - mids[i], Math.min(mids[mids.length - 1] - mids[i], drag.x - drag.x0));
   const c = mids[i] + dx;
@@ -492,18 +462,20 @@ function moveDrag() {
     if (j !== i) el.style.transform = j > i && j <= to ? `translateX(${-w}px)` : j < i && j >= to ? `translateX(${w}px)` : '';
   });
 }
+// A mouse-dragged tab that leaves the strip closes its gap, the way a browser's does
+function closeGap() {
+  drag.to = -1;
+  drag.els.forEach((el, j) => el.style.transform = j > drag.i ? `translateX(${-drag.w}px)` : '');
+}
 addEventListener('pointermove', e => {
   if (!drag || e.pointerId !== drag.id) return;
   drag.x = e.clientX;
   drag.y = e.clientY;
-  drag.sx = e.screenX;
-  drag.sy = e.screenY;
   const moved = Math.max(Math.abs(drag.x - drag.x0), Math.abs(drag.y - drag.y0));
   if (drag.on) moveDrag();
-  else if (drag.mouse && moved > 5) { startDrag(); moveDrag(); }
-  else if (!drag.mouse && moved > 10) { clearTimeout(drag.timer); drag = null; } // a swipe, let the strip scroll
+  else if (moved > 10) { clearTimeout(drag.timer); drag = null; } // a swipe, let the strip scroll
 });
-async function endDrag(e) {
+function endDrag(e) {
   if (!drag || e.pointerId !== drag.id) return;
   clearTimeout(drag.timer);
   const d = drag;
@@ -511,23 +483,10 @@ async function endDrag(e) {
   if (!d.on) return;
   justDragged = true;
   setTimeout(() => justDragged = false);
-  const strip = $('tabs');
-  if (d.ghost) {
-    d.ghost.remove();
-    strip.classList.add('settle');
-    d.els.forEach(el => el.style.transform = '');
-    d.el.style.visibility = '';
-    d.el.classList.remove('dragging');
-    void strip.offsetWidth;
-    strip.classList.remove('settle');
-    bc?.postMessage({ type: 'hover', from: ME });
-    const t = tabs[d.i];
-    const moved = !toClient(e.screenX, e.screenY) && await giveToWindow(t, e.screenX, e.screenY)
-      || openInNewWindow(t, e.screenX - d.ox, e.screenY - d.oy);
-    if (moved && tabs.includes(t)) { d.el.remove(); removeTabData(tabs.indexOf(t)); afterRemove(); }
-    return;
-  }
-  const from = d.el.getBoundingClientRect().left;
+  finishReorder(d);
+}
+function finishReorder(d) {
+  const strip = $('tabs'), from = d.el.getBoundingClientRect().left;
   // move the element itself; the neighbours already sit where they belong, so drop their offsets without animating
   strip.classList.add('settle');
   d.els.forEach(el => el.style.transform = '');
@@ -535,7 +494,8 @@ async function endDrag(e) {
   void strip.offsetWidth;
   strip.classList.remove('settle');
   d.el.classList.remove('dragging');
-  d.el.animate([{ transform: `translateX(${from - d.el.getBoundingClientRect().left}px)` }, { transform: 'none' }],
+  d.el.style.visibility = '';
+  if (!d.native) d.el.animate([{ transform: `translateX(${from - d.el.getBoundingClientRect().left}px)` }, { transform: 'none' }],
     { duration: ms(180), easing: 'cubic-bezier(.2, .8, .2, 1)' });
   tabs[active].scroll = scrollY;
   tabs.splice(d.to, 0, tabs.splice(d.i, 1)[0]);
@@ -556,25 +516,9 @@ function openInNewWindow(t, left, top) {
   toast('New windows are blocked here. Use the installed README Reader app.');
   return false;
 }
-/* Dropping a torn-off tab on another README Reader window moves it there. Windows can't see each other's pointer,
-   so the dragging window broadcasts its screen position and each window checks whether that point is inside itself. */
-const ME = Math.random().toString(36).slice(2);
-const bc = 'BroadcastChannel' in window ? new BroadcastChannel('readme-reader-windows') : null;
-const waiting = new Map(), taking = new Map();
-// screen point -> this page's coordinates, or null when it's outside; the frame (borders, title bar) is outer size minus inner size
-function toClient(sx, sy, top = 0) {
-  const side = (outerWidth - innerWidth) / 2;
-  const x = sx - screenX - side, y = sy - screenY - (outerHeight - innerHeight - side);
-  return x >= 0 && y >= top && x < innerWidth && y < innerHeight ? { x, y } : null;
-}
-// only the header (title bar and tab strip) takes a dropped tab, like a browser; over the document it opens a new window instead
-function overTabs(sx, sy) {
-  const p = toClient(sx, sy, -(outerHeight - innerHeight));
-  return p && p.y < document.querySelector('.tabbar').getBoundingClientRect().bottom + 8 ? p : null;
-}
 const slotAt = x => tabEls().filter(el => { const r = el.getBoundingClientRect(); return r.left + r.width / 2 < x; }).length;
 function showSlot(slot) {
-  const bar = document.querySelector('.tabbar');
+  const bar = $('tabs').parentElement;
   let mark = bar.querySelector('.drop-mark');
   bar.classList.toggle('drop-target', slot >= 0);
   if (slot < 0) return mark?.remove();
@@ -583,28 +527,11 @@ function showSlot(slot) {
   const x = slot < els.length ? els[slot].getBoundingClientRect().left - 2 : (els.at(-1)?.getBoundingClientRect().right ?? bx + 12);
   mark.style.left = x - bx + 'px';
 }
-// The first window to answer gets the tab; the file handle travels with it, so saving still goes to the same file.
-function giveToWindow(t, x, y) {
-  if (!bc) return false;
-  const req = Math.random().toString(36).slice(2);
-  bc.postMessage({ type: 'drop', from: ME, req, x, y });
-  return new Promise(done => {
-    const timer = setTimeout(() => { waiting.delete(req); done(false); }, 300);
-    waiting.set(req, to => {
-      clearTimeout(timer);
-      waiting.delete(req);
-      const tab = { name: t.name, md: t.md, dirty: t.dirty, handle: t.handle };
-      try { bc.postMessage({ type: 'give', from: ME, req, to, tab }); }
-      catch { delete tab.handle; bc.postMessage({ type: 'give', from: ME, req, to, tab }); }
-      done(true);
-    });
-  });
-}
 function receiveTab(t, slot) {
   tabs[active].scroll = scrollY;
   if (tabs.length === 1 && tabs[0].md == null) { tabs[0] = t; nameTab(tabEls()[0], t.name); active = 0; }
   else {
-    slot = Math.min(slot ?? tabs.length, tabs.length);
+    slot = Math.min(slot, tabs.length);
     tabs.splice(slot, 0, t);
     addTabEl(t);
     const els = tabEls();
@@ -615,14 +542,73 @@ function receiveTab(t, slot) {
   scrollTo(0, 0);
   window.focus();
 }
+// A file handle can't ride inside a drag, so it follows over this channel and the tab keeps saving to the same file
+const bc = 'BroadcastChannel' in window ? new BroadcastChannel('readme-reader-windows') : null;
+const arrived = new Map();
 if (bc) bc.onmessage = ({ data: m }) => {
-  if (m.from === ME) return;
-  if (m.type === 'take') return waiting.get(m.req)?.(m.from);
-  if (m.type === 'give') { if (m.to === ME) receiveTab(m.tab, taking.get(m.req)); return taking.delete(m.req); }
-  const p = m.x != null && overTabs(m.x, m.y);
-  showSlot(p && m.type === 'hover' ? slotAt(p.x) : -1);
-  if (m.type === 'drop' && p) { taking.set(m.req, slotAt(p.x)); bc.postMessage({ type: 'take', from: ME, req: m.req }); }
+  const t = arrived.get(m.req);
+  arrived.delete(m.req);
+  if (t && m.handle) { t.handle = m.handle; showSaveState(t); }
 };
+{
+  const bar = $('tabs').parentElement, isTab = e => e.dataTransfer.types.includes(TAB_TYPE);
+  $('tabs').addEventListener('dragstart', e => {
+    const el = e.target.closest?.('.tab');
+    if (!el) return;
+    const els = tabEls(), i = indexOf(el), t = tabs[i], r = el.getBoundingClientRect();
+    drag = { native: true, on: true, el, els, i, to: i, x0: e.clientX, x: e.clientX, ox: e.clientX - r.left, oy: e.clientY - r.top,
+      mids: els.map(el => { const r = el.getBoundingClientRect(); return r.left + r.width / 2; }), w: r.width + 2,
+      req: Math.random().toString(36).slice(2) };
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData(TAB_TYPE, JSON.stringify({ req: drag.req, name: t.name, md: t.md, dirty: t.dirty }));
+    el.classList.add('dragging');
+    e.dataTransfer.setDragImage(el, drag.ox, drag.oy);
+    // the browser draws the moving tab; the original only leaves its gap, once the picture has been taken
+    setTimeout(() => { if (drag?.el === el) el.style.visibility = 'hidden'; });
+  });
+  bar.addEventListener('dragover', e => {
+    if (!isTab(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (drag?.native) { drag.x = e.clientX; moveDrag(); drag.el.style.transform = ''; }
+    else showSlot(slotAt(e.clientX));
+  });
+  bar.addEventListener('dragleave', e => {
+    if (!isTab(e) || bar.contains(e.relatedTarget)) return;
+    if (drag?.native) closeGap(); else showSlot(-1);
+  });
+  bar.addEventListener('drop', e => {
+    if (!isTab(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (drag?.native) return drag.dropped = true; // our own strip: dragend finishes the reorder
+    showSlot(-1);
+    const m = JSON.parse(e.dataTransfer.getData(TAB_TYPE)), t = { name: m.name, md: m.md, dirty: m.dirty };
+    arrived.set(m.req, t);
+    receiveTab(t, slotAt(e.clientX));
+  });
+  $('tabs').addEventListener('dragend', e => {
+    const d = drag;
+    if (!d?.native) return;
+    drag = null;
+    if (d.dropped && d.to >= 0) return finishReorder(d);
+    const strip = $('tabs');
+    strip.classList.add('settle');
+    d.els.forEach(el => el.style.transform = '');
+    d.el.style.visibility = '';
+    d.el.classList.remove('dragging');
+    void strip.offsetWidth;
+    strip.classList.remove('settle');
+    const t = tabs[d.i];
+    // 'move' means another window's strip took it; nothing took it means it was dropped elsewhere, so it gets its own window
+    if (e.dataTransfer.dropEffect === 'move') {
+      try { bc?.postMessage({ req: d.req, handle: t.handle }); } catch {}
+    } else if (!openInNewWindow(t, e.screenX - d.ox, e.screenY - d.oy)) return;
+    d.el.remove();
+    removeTabData(d.i);
+    afterRemove();
+  });
+}
 addEventListener('pointerup', endDrag);
 addEventListener('pointercancel', endDrag);
 $('tabs').addEventListener('touchmove', e => { if (drag?.on) e.preventDefault(); }, { passive: false });
@@ -791,7 +777,8 @@ let dragDepth = 0;
 const showDrop = on => { $('drop').classList.toggle('show', on); document.body.classList.toggle('dragging', on); };
 addEventListener('dragenter', e => { if (e.dataTransfer.types.includes('Files')) { dragDepth++; showDrop(true); } });
 addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; showDrop(false); } });
-addEventListener('dragover', e => e.preventDefault());
+// only files are accepted page-wide; a dragged tab that lands outside a tab strip must count as not dropped, so it tears off
+addEventListener('dragover', e => { if (e.dataTransfer.types.includes('Files')) e.preventDefault(); });
 addEventListener('drop', e => {
   e.preventDefault();
   dragDepth = 0; showDrop(false);
