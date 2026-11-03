@@ -462,7 +462,8 @@ function reattach() {
   drag.el.style.visibility = '';
 }
 function moveDrag() {
-  const away = drag.mouse && tabs.length > 1 && Math.abs(drag.y - drag.y0) > TEAR_OFF;
+  // a lone tab tears off too: the new window opens where it's dropped and this one closes, so the window seems to move
+  const away = drag.mouse && Math.abs(drag.y - drag.y0) > TEAR_OFF;
   if (away !== !!drag.ghost) away ? detach() : reattach();
   if (drag.ghost) {
     drag.ghost.style.left = drag.x - drag.ox + 'px';
