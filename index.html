@@ -285,6 +285,7 @@ function renderDoc() {
   blobUrls.forEach(URL.revokeObjectURL);
   blobUrls = [];
   $('path').textContent = isStart ? 'New tab' : t.name;
+  showPath(t);
   document.title = isStart ? 'README Reader' : t.name;
   if (isStart) { $('stats').textContent = ''; return; }
 
@@ -696,6 +697,7 @@ $('save-where').onclick = async () => {
       t.name = t.handle.name;
       nameTab(tabEls()[active], t.name);
       $('path').textContent = t.name;
+      showPath(t);
     } else {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob([t.md], { type: 'text/markdown' }));
@@ -754,6 +756,14 @@ async function showLocalImages(t, els) {
   if (missing === els.length) toast(`None of the images are in "${t.dir.name}". Choose the project folder that has them (for example the one with a "${els[0].dataset.local.split('/')[0]}" folder).`);
   else if (missing) toast(`${missing} image${missing > 1 ? 's' : ''} couldn't be found in "${t.dir.name}".`);
   if (missing === els.length) { t.dir = null; shown = null; renderDoc(); }
+}
+// Browsers never give a page a file's full location on disk; the most they reveal is where it sits inside a folder the user chose
+async function showPath(t) {
+  const el = $('path');
+  if (t.md == null) return el.removeAttribute('title');
+  el.title = `${t.name}\nThe full location on disk isn't shared with web apps.`;
+  const parts = t.dir && t.handle && await t.dir.resolve(t.handle).catch(() => null);
+  if (parts && tabs[active] === t) el.title = [t.dir.name, ...parts].join('/');
 }
 $('imgbtn').onclick = async () => {
   const t = tabs[active];
