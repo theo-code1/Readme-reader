@@ -106,10 +106,32 @@
   #out .code { position: relative; }
   #out pre { background: var(--code-bg); padding: 14px 16px; border-radius: 6px; overflow-x: auto; line-height: 1.5; }
   #out pre code { background: none; padding: 0; }
-  #out .copy { position: absolute; top: 8px; right: 8px; opacity: 0; transition: opacity .15s; }
-  /* shown on hover, or when tabbed to; touch screens can't hover, so there it stays visible */
-  #out .code:hover .copy, #out .code:focus-within .copy { opacity: 1; }
-  @media (hover: none) { #out .copy { opacity: 1; } }
+  #out .acts { position: absolute; top: 8px; right: 8px; display: flex; gap: 8px; }
+  #out .acts .btn { opacity: 0; transition: opacity .15s, background .15s; }
+  /* shown on hover, or when tabbed to; touch screens can't hover, so there they stay visible. A posted label always shows. */
+  #out .code:hover .acts .btn, #out .code:focus-within .acts .btn, #out .acts .btn.on { opacity: 1; }
+  @media (hover: none) { #out .acts .btn { opacity: 1; } }
+  #out .post.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+  #out .code.posted pre { opacity: .55; }
+
+  /* marks: sections done, posts posted, boxes ticked */
+  #out .mark { display: inline-grid; place-items: center; width: .95em; height: .95em; margin-right: .45em; padding: 0; vertical-align: -.08em;
+    border: 2px solid var(--edge); border-radius: 50%; background: none; color: var(--bg); font: 700 .6em/1 var(--body);
+    transition: background .15s, border-color .15s, transform .12s; }
+  #out .mark::after { content: "✓"; opacity: 0; }
+  #out .mark:hover { border-color: var(--accent); }
+  #out .mark:active { transform: scale(.85); }
+  #out .mark[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); }
+  #out .mark[aria-pressed="true"]::after { opacity: 1; }
+  #out .done-h { color: var(--muted); }
+  #out .faded { opacity: .5; transition: opacity .2s; }
+  #out .faded:hover, #out .faded:focus-within { opacity: 1; }
+  #out li > input[type="checkbox"] { width: 1.05em; height: 1.05em; margin: 0 .45em 0 0; vertical-align: -.15em; accent-color: var(--accent); cursor: pointer; }
+  #out li.ticked { color: var(--muted); text-decoration: line-through; }
+  .toc a.done { text-decoration: line-through; }
+  .toc a.done::before { content: "✓ "; color: var(--accent); }
+  #progress.all { border-color: var(--accent); color: var(--accent); }
+  #readbar { position: absolute; left: 0; bottom: -1px; height: 2px; width: 0; background: var(--accent); pointer-events: none; }
   #out .copy.done { animation: pop .3s var(--ease); border-color: var(--accent); color: var(--accent); opacity: 1; }
   @keyframes pop { 50% { transform: scale(1.1); } }
   #out blockquote { margin: 0; padding-left: 16px; border-left: 3px solid var(--line); color: var(--muted); }
@@ -158,11 +180,13 @@
   <div class="toolbar">
     <span id="path"></span>
     <span id="stats"></span>
+    <button class="btn" id="progress" hidden></button>
     <button class="btn" id="edit-btn" hidden>Edit</button>
     <span id="save-status" role="status"></span>
     <button class="btn" id="save-where" hidden></button>
     <button class="btn" id="open-btn">Open files</button>
   </div>
+  <div id="readbar"></div>
 </div>
 
 <div class="page" id="page">
@@ -286,6 +310,9 @@ function renderDoc() {
   blobUrls = [];
   $('path').textContent = isStart ? 'New tab' : t.name;
   showPath(t);
+  t.items = null;
+  showProgress();
+  readingBar();
   document.title = isStart ? 'README Reader' : t.name;
   if (isStart) { $('stats').textContent = ''; return; }
 
@@ -310,9 +337,14 @@ function renderDoc() {
     const w = document.createElement('div'); w.className = 'code'; pre.before(w); w.append(pre);
     const b = document.createElement('button'); b.className = 'btn copy'; b.textContent = 'Copy';
     b.onclick = () => navigator.clipboard.writeText(pre.innerText)
-      .then(() => { b.textContent = 'Copied'; b.classList.add('done'); setTimeout(() => { b.textContent = 'Copy'; b.classList.remove('done'); }, 1500); })
+      .then(() => {
+        b.textContent = 'Copied'; b.classList.add('done'); setTimeout(() => { b.textContent = 'Copy'; b.classList.remove('done'); }, 1500);
+        // copying a post usually means it's about to go out, so offer to mark it
+        if (w.item && !w.item.on) toast('Copied.', { label: 'Mark as posted', fn: () => toggleMark(t, w.item) });
+      })
       .catch(() => getSelection().selectAllChildren(pre));
-    w.append(b);
+    const acts = document.createElement('div'); acts.className = 'acts'; acts.append(b);
+    w.append(acts);
   });
   out.querySelectorAll('a[href]').forEach(a => { if (!a.getAttribute('href').startsWith('#')) { a.target = '_blank'; a.rel = 'noopener'; } });
 
@@ -334,6 +366,7 @@ function renderDoc() {
     $('toc').open = matchMedia('(min-width: 1000px)').matches;
     page.classList.add('has-toc');
   }
+  addMarks(t, out);
 }
 
 function update() { syncActive(); renderDoc(); save(); }
@@ -343,7 +376,8 @@ function selectTab(i) {
   tabs[active].scroll = scrollY;
   active = i;
   update();
-  scrollTo(0, tabs[i].scroll || 0);
+  // a tab restored after a restart has no scroll yet this session: go back to where its file was left
+  if (tabs[i].scroll == null) resume(tabs[i]); else scrollTo(0, tabs[i].scroll);
 }
 function removeTabData(i) {
   tabs.splice(i, 1);
@@ -426,7 +460,7 @@ async function openFiles(files) {
     else { tabs[active].scroll = scrollY; tabs.push(tab); addTabEl(tab); active = tabs.length - 1; }
     opened++;
   }
-  if (opened) { update(); scrollTo(0, 0); }
+  if (opened) { update(); resume(tabs[active], true); }
   if (skipped.length) toast('Skipped: ' + skipped.join('; '));
 }
 
@@ -541,7 +575,7 @@ function receiveTab(t, slot) {
   if (slot < els.length - 1) els[slot].before(els.at(-1));
   active = slot;
   update();
-  scrollTo(0, 0);
+  resume(t);
   window.focus();
 }
 // A file handle can't ride inside a drag, so it follows over this channel and the tab keeps saving to the same file
@@ -629,7 +663,124 @@ $('open-btn').onclick = $('choose').onclick = async () => {
 /* Editing */
 function showStats(t) {
   const words = t.md.split(/\s+/).filter(Boolean).length;
-  $('stats').textContent = `${words.toLocaleString()} words · ${Math.max(1, Math.round(words / 230))} min read`;
+  t.mins = Math.max(1, Math.round(words / 230));
+  t.statsText = $('stats').textContent = `${words.toLocaleString()} words · ${t.mins} min read`;
+}
+
+/* Marks: a check on each section heading, "Mark posted" on each copy box, and ticking - [ ] boxes.
+   They stay in this app, never in the file, saved per file name together with where you stopped reading,
+   so every window and every reopen sees them. */
+const MARKS = 'readme-reader-marks';
+// shortcut: marks are matched by file name, so two different files with the same name share them; key by file handle if that bites
+const allMarks = () => { try { return JSON.parse(localStorage.getItem(MARKS)) || {}; } catch { return {}; } };
+const marksFor = name => ({ on: {}, ...allMarks()[name] });
+function saveMarks(name, m) {
+  try { const all = allMarks(); all[name] = m; localStorage.setItem(MARKS, JSON.stringify(all)); }
+  catch { toast("Couldn't save marks: this browser is blocking storage."); }
+}
+const DAY = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+
+function addMarks(t, out) {
+  const m = marksFor(t.name), seen = {}, items = [];
+  // an item is known by its kind and text, so marks survive edits elsewhere in the file; repeats get a count
+  const add = (kind, text, el, initial, show) => {
+    let k = kind + ':' + text.trim().replace(/\s+/g, ' ').slice(0, 200);
+    seen[k] = (seen[k] || 0) + 1;
+    if (seen[k] > 1) k += '#' + seen[k];
+    const it = { kind, k, el, show, initial, at: m.on[k], on: k in m.on ? !!m.on[k] : initial };
+    items.push(it);
+    return it;
+  };
+  out.querySelectorAll('h2, h3').forEach(h => {
+    const level = +h.tagName[1], body = [], text = h.textContent, link = $('toc-list').querySelector(`a[href="#${h.id.slice(2)}"]`);
+    for (let s = h.nextElementSibling; s && !(/^H[1-3]$/.test(s.tagName) && +s.tagName[1] <= level); s = s.nextElementSibling) body.push(s);
+    const b = document.createElement('button');
+    b.className = 'mark';
+    h.prepend(b);
+    const it = add('done', text, h, false, () => {
+      h.classList.toggle('done-h', it.on);
+      body.forEach(s => s.classList.toggle('faded', it.on));
+      link?.classList.toggle('done', it.on);
+      b.setAttribute('aria-pressed', it.on);
+      b.setAttribute('aria-label', 'Done: ' + text);
+      b.title = it.on ? `Done ${DAY.format(it.at)}. Click to undo.` : 'Mark this section done';
+    });
+    b.onclick = () => toggleMark(t, it);
+  });
+  out.querySelectorAll('.code').forEach(w => {
+    const b = document.createElement('button');
+    b.className = 'btn post';
+    w.querySelector('.acts').prepend(b);
+    const it = w.item = add('posted', w.querySelector('pre').innerText, w, false, () => {
+      w.classList.toggle('posted', it.on);
+      b.classList.toggle('on', it.on);
+      b.setAttribute('aria-pressed', it.on);
+      b.textContent = it.on ? `✓ Posted ${DAY.format(it.at)}` : 'Mark posted';
+    });
+    b.onclick = () => toggleMark(t, it);
+  });
+  out.querySelectorAll('li > input[type="checkbox"]').forEach(cb => {
+    const li = cb.parentElement;
+    cb.disabled = false;
+    const it = add('done', li.textContent, li, cb.hasAttribute('checked'), () => { cb.checked = it.on; li.classList.toggle('ticked', it.on); });
+    cb.onchange = () => toggleMark(t, it);
+  });
+  items.forEach(it => it.show());
+  t.items = items;
+  showProgress();
+}
+function toggleMark(t, it) {
+  const m = marksFor(t.name);
+  it.on = !it.on;
+  it.at = Date.now();
+  if (it.on === it.initial) delete m.on[it.k]; else m.on[it.k] = it.on ? it.at : 0;
+  saveMarks(t.name, m);
+  it.show();
+  showProgress();
+}
+// "3 of 15 posted · 4 of 9 done" in the toolbar; clicking it jumps to the next one not finished below where you are
+function showProgress() {
+  const t = tabs[active], items = t.items || [], p = $('progress');
+  p.hidden = !items.length;
+  if (!items.length) return;
+  const parts = ['posted', 'done'].map(kind => {
+    const of = items.filter(i => i.kind === kind);
+    return of.length && `${of.filter(i => i.on).length} of ${of.length} ${kind}`;
+  }).filter(Boolean);
+  const all = items.every(i => i.on);
+  p.textContent = all ? `All done ✓ ${parts.join(' · ').replace(/\d+ of /g, '')}` : parts.join(' · ');
+  p.classList.toggle('all', all);
+  p.title = all ? 'Everything in this file is marked' : 'Go to the next one not done';
+}
+$('progress').onclick = () => {
+  const left = (tabs[active].items || []).filter(i => !i.on);
+  const next = left.find(i => i.el.getBoundingClientRect().top > 140) || left[0];
+  if (!next) return;
+  next.el.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' });
+  next.el.classList.remove('flash');
+  void next.el.offsetWidth;
+  next.el.classList.add('flash');
+};
+
+// Reading position: kept per file, so a file reopens where you stopped; the bar under the toolbar shows how far you are
+function readingBar() {
+  const t = tabs[active], max = document.documentElement.scrollHeight - innerHeight, reading = t?.md != null && !t.editing;
+  const r = reading && max > 0 ? Math.min(1, scrollY / max) : 0;
+  $('readbar').style.width = r * 100 + '%';
+  if (reading && t.statsText) $('stats').textContent = t.statsText + (t.mins > 1 && r > .02 && r < .98 ? ` · ${Math.max(1, Math.round(t.mins * (1 - r)))} min left` : '');
+}
+let posTimer;
+addEventListener('scroll', () => {
+  readingBar();
+  const t = tabs[active], y = Math.round(scrollY);
+  if (t?.md == null || t.editing) return;
+  clearTimeout(posTimer);
+  posTimer = setTimeout(() => { const m = marksFor(t.name); m.pos = y; saveMarks(t.name, m); }, 400);
+}, { passive: true });
+function resume(t, tell) {
+  const pos = (t.md != null && marksFor(t.name).pos) || 0;
+  scrollTo(0, pos);
+  if (tell && pos > innerHeight / 2) toast(`Back where you stopped in ${t.name}.`, { label: 'Start from the top', fn: () => scrollTo(0, 0) });
 }
 $('edit-btn').onclick = () => {
   const t = tabs[active];
@@ -809,6 +960,7 @@ if (!tabs.length) tabs = [blank()];
 active = Math.min(active, tabs.length - 1);
 tabs.forEach(t => $('tabs').append(makeTab(t)));
 update();
+resume(tabs[active], true);
 
 // Files opened from Windows (double-click, Open with) once the reader is installed as an app
 // The file handle is kept so the folder picker can start in that file's folder
