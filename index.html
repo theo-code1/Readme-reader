@@ -107,10 +107,14 @@
   #out pre { background: var(--code-bg); padding: 14px 16px; border-radius: 6px; overflow-x: auto; line-height: 1.5; }
   #out pre code { background: none; padding: 0; }
   #out .acts { position: absolute; top: 8px; right: 8px; display: flex; gap: 8px; }
-  #out .acts .btn { opacity: 0; transition: opacity .15s, background .15s; }
-  /* shown on hover, or when tabbed to; touch screens can't hover, so there they stay visible. A posted label always shows. */
-  #out .code:hover .acts .btn, #out .code:focus-within .acts .btn, #out .acts .btn.on { opacity: 1; }
-  @media (hover: none) { #out .acts .btn { opacity: 1; } }
+  #out .acts .btn { transition: opacity .15s, background .15s; }
+  /* Copy shows on hover, or when tabbed to; touch screens can't hover, so there it stays visible. Mark posted always shows. */
+  #out .acts .copy { opacity: 0; }
+  #out .code:hover .acts .copy, #out .code:focus-within .acts .copy { opacity: 1; }
+  @media (hover: none) { #out .acts .copy { opacity: 1; } }
+  #out .tally { margin-left: .5em; padding: .15em .6em; border: 1px solid var(--line); border-radius: 999px; vertical-align: .2em;
+    font: 600 .55em var(--body); color: var(--muted); white-space: nowrap; }
+  #out .tally.full { border-color: var(--accent); color: var(--accent); }
   #out .post.on { background: var(--accent); border-color: var(--accent); color: var(--bg); }
   #out .code.posted pre { opacity: .55; }
 
@@ -681,7 +685,7 @@ function saveMarks(name, m) {
 const DAY = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
 
 function addMarks(t, out) {
-  const m = marksFor(t.name), seen = {}, items = [];
+  const m = marksFor(t.name), seen = {}, items = [], tallies = [];
   // an item is known by its kind and text, so marks survive edits elsewhere in the file; repeats get a count
   const add = (kind, text, el, initial, show) => {
     let k = kind + ':' + text.trim().replace(/\s+/g, ' ').slice(0, 200);
@@ -694,6 +698,13 @@ function addMarks(t, out) {
   out.querySelectorAll('h2, h3').forEach(h => {
     const level = +h.tagName[1], body = [], text = h.textContent, link = $('toc-list').querySelector(`a[href="#${h.id.slice(2)}"]`);
     for (let s = h.nextElementSibling; s && !(/^H[1-3]$/.test(s.tagName) && +s.tagName[1] <= level); s = s.nextElementSibling) body.push(s);
+    // a section holding posts or checkboxes is done when they are, so it counts them instead of having its own check
+    if (body.some(s => s.matches('.code') || s.querySelector('.code, li > input[type="checkbox"]'))) {
+      const span = document.createElement('span');
+      span.className = 'tally';
+      h.append(span);
+      return tallies.push({ h, body, span, link });
+    }
     const b = document.createElement('button');
     b.className = 'mark';
     h.prepend(b);
@@ -726,8 +737,20 @@ function addMarks(t, out) {
     cb.onchange = () => toggleMark(t, it);
   });
   items.forEach(it => it.show());
+  tallies.forEach(s => s.items = items.filter(i => s.body.some(el => el === i.el || el.contains(i.el))));
   t.items = items;
+  t.tallies = tallies;
   showProgress();
+}
+function showTallies(t) {
+  (t.tallies || []).forEach(({ h, span, link, items }) => {
+    const done = items.filter(i => i.on).length, full = done === items.length;
+    const word = items.every(i => i.kind === 'posted') ? 'posted' : 'done';
+    span.textContent = `${full ? '✓ ' : ''}${done}/${items.length} ${word}`;
+    span.classList.toggle('full', full);
+    h.classList.toggle('done-h', full);
+    link?.classList.toggle('done', full);
+  });
 }
 function toggleMark(t, it) {
   const m = marksFor(t.name);
@@ -741,6 +764,7 @@ function toggleMark(t, it) {
 // "3 of 15 posted · 4 of 9 done" in the toolbar; clicking it jumps to the next one not finished below where you are
 function showProgress() {
   const t = tabs[active], items = t.items || [], p = $('progress');
+  showTallies(t);
   p.hidden = !items.length;
   if (!items.length) return;
   const parts = ['posted', 'done'].map(kind => {
